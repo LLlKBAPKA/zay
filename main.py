@@ -113,15 +113,16 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("Ошибка в обработчике", exc_info=context.error)
 
-def main() -> None:
-    app = Application.builder().token(TOKEN).build()
+async def post_init(application: Application) -> None:
+    """Удаляем вебхук перед запуском polling"""
+    await application.bot.delete_webhook(drop_pending_updates=True)
+    logger.info("Бот успешно инициализирован")
 
-    # Удаляем вебхук перед запуском polling
-    app.run_polling(
-        drop_pending_updates=True,
-        allowed_updates=Update.ALL_TYPES,
-        close_loop=False
-    )
+def main() -> None:
+    app = Application.builder() \
+        .token(TOKEN) \
+        .post_init(post_init) \
+        .build()
 
     conv_handler = ConversationHandler(
         entry_points=[
@@ -143,13 +144,15 @@ def main() -> None:
     app.add_error_handler(error_handler)
 
     try:
+        # Важные параметры для Render
         app.run_polling(
-            poll_interval=2.0,
+            poll_interval=3.0,  # Увеличенный интервал
             drop_pending_updates=True,
-            close_loop=False
+            close_loop=False,
+            stop_signals=[]
         )
     except Exception as e:
-        logger.error(f"Ошибка при запуске бота: {e}")
+        logger.error(f"Фатальная ошибка: {e}")
     finally:
         logger.info("Бот остановлен")
 
