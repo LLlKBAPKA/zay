@@ -1,13 +1,40 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+    ConversationHandler  # Добавлен импорт ConversationHandler
+)
 import os
 from dotenv import load_dotenv
+import logging
+from flask import Flask, request
 
 load_dotenv()
 
 TOKEN = os.getenv("TOKEN")
 ADMIN_CHAT_ID_1 = os.getenv("ADMIN_1")
 ADMIN_CHAT_ID_2 = os.getenv("ADMIN_2")
+
+# Настройка логов
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Минимальный Flask-сервер для Render
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), bot)
+    dispatcher.process_update(update)
+    return 'ok'
 
 # Этапы диалога
 START, EXPERIENCE, TIME_PER_DAY, MOTIVATION = range(4)
@@ -75,7 +102,7 @@ async def motivation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Заявка отправлена! Ожидайте ответа.")
     return ConversationHandler.END
 
-# Обработка действий админа (без указания имени)
+# Обработка действий админа
 async def admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     action, user_id = query.data.split('_')
@@ -97,7 +124,9 @@ async def admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Запуск бота
 def main():
-    app = Application.builder().token(TOKEN).build()
+    global bot, dispatcher
+
+    bot_app = Application.builder().token(TOKEN).build()
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start), CallbackQueryHandler(apply, pattern="^apply$")],
@@ -109,9 +138,16 @@ def main():
         fallbacks=[]
     )
 
-    app.add_handler(conv_handler)
-    app.add_handler(CallbackQueryHandler(admin_action, pattern="^(accept|reject)_"))
-    app.run_polling()
+    bot_app.add_handler(conv_handler)
+    bot_app.add_handler(CallbackQueryHandler(admin_action, pattern="^(accept|reject)_"))
+
+    # Для webhook (раскомментировать при использовании)
+    # bot = bot_app.bot
+    # dispatcher = bot_app
+    # app.run(host='0.0.0.0', port=10000)
+
+    # Для polling (лучше для локальной разработки)
+    bot_app.run_polling()
 
 if __name__ == '__main__':
     main()
