@@ -18,24 +18,34 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Конфигурация (отдельные переменные для каждого админа)
+# Конфигурация
 TOKEN = os.getenv("TOKEN")
-ADMIN_1 = os.getenv("ADMIN_1")  # Первый администратор
-ADMIN_2 = os.getenv("ADMIN_2")  # Второй администратор
+ADMIN_1 = os.getenv("ADMIN_1")  # ID первого администратора
+ADMIN_2 = os.getenv("ADMIN_2")  # ID второго администратора
 
-# Фильтруем только валидные ID админов
+# Проверяем и фильтруем ID админов
 ADMIN_IDS = []
-if ADMIN_1 and ADMIN_1.isdigit():
-    ADMIN_IDS.append(int(ADMIN_1))
-if ADMIN_2 and ADMIN_2.isdigit():
-    ADMIN_IDS.append(int(ADMIN_2))
+for admin_id in [ADMIN_1, ADMIN_2]:
+    if admin_id and admin_id.isdigit():
+        ADMIN_IDS.append(int(admin_id))
 
 # Этапы диалога
-START, EXPERIENCE, TIME_PER_DAY, MOTIVATION = range(4)
+START, EXPERIENCE, TIME, MOTIVATION = range(4)
+
+# Флаг активности бота
+BOT_ACTIVE = True
+
+def is_admin(user_id: int) -> bool:
+    """Проверяет, является ли пользователь администратором"""
+    return str(user_id) in [ADMIN_1, ADMIN_2]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Начало диалога с кнопкой"""
-    keyboard = [[InlineKeyboardButton("Подать заявку", callback_data="apply")]]
+    """Обработка команды /start"""
+    if not BOT_ACTIVE:
+        await update.message.reply_text("⏸ Бот временно отключен администратором")
+        return ConversationHandler.END
+        
+    keyboard = [[InlineKeyboardButton("📝 Подать заявку", callback_data="start_application")]]
     await update.message.reply_text(
         "👋 Добро пожаловать в бот для подачи заявок!\n\n"
         "Нажмите кнопку ниже, чтобы начать:",
@@ -43,38 +53,47 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     )
     return START
 
-async def apply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Обработка нажатия кнопки"""
+async def start_application(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Начало подачи заявки"""
     query = update.callback_query
-    await query.answer()  # Обязательно подтверждаем получение callback
+    await query.answer()
     await query.edit_message_text("💼 Есть ли у вас опыт в этой сфере? (Да/Нет)")
     return EXPERIENCE
 
-async def get_experience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Получаем информацию об опыте"""
-    context.user_data['experience'] = update.message.text
-    await update.message.reply_text("⏳ Сколько часов в день готовы уделять работе? (Цифра)")
-    return TIME_PER_DAY
+async def receive_experience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Получение информации об опыте"""
+    context.user_data['experience'] = update.message.text[:200]  # Ограничение длины
+    await update.message.reply_text("⏳ Сколько часов в день вы готовы уделять работе? (Цифра)")
+    return TIME
 
-async def get_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Получаем информацию о времени"""
-    context.user_data['time'] = update.message.text
-    await update.message.reply_text("🎯 Почему вы хотите присоединиться к команде?")
+async def receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Получение информации о времени"""
+    try:
+        hours = float(update.message.text.replace(',', '.'))
+        if hours <= 0 or hours > 24:
+            await update.message.reply_text("⚠ Пожалуйста, введите корректное число часов (0-24)")
+            return TIME
+        context.user_data['time'] = f"{hours:.1f} ч/день"
+    except ValueError:
+        await update.message.reply_text("⚠ Пожалуйста, введите число")
+        return TIME
+    
+    await update.message.reply_text("🎯 Расскажите, почему вы хотите присоединиться?")
     return MOTIVATION
 
-async def get_motivation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Завершаем заявку и отправляем админам"""
-    context.user_data['motivation'] = update.message.text
+async def receive_motivation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Завершение заявки и отправка администраторам"""
     user = update.effective_user
+    context.user_data['motivation'] = update.message.text[:500]  # Ограничение длины
     
-    # Формируем сообщение для админов
-    admin_message = (
+    # Формируем текст заявки
+    application_text = (
         "📌 *Новая заявка*\n\n"
         f"👤 *Имя:* {user.full_name}\n"
-        f"📱 *Username:* @{user.username or 'нет'}\n"
-        f"🆔 *ID:* {user.id}\n\n"
+        f"📱 *Username:* @{user.username if user.username else 'нет'}\n"
+        f"🆔 *ID:* `{user.id}`\n\n"
         f"💼 *Опыт:* {context.user_data['experience']}\n"
-        f"⏳ *Время:* {context.user_data['time']} ч/день\n"
+        f"⏳ *Время:* {context.user_data['time']}\n"
         f"🎯 *Мотивация:* {context.user_data['motivation']}"
     )
     
@@ -86,83 +105,99 @@ async def get_motivation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         ]
     ]
     
-    # Отправляем каждому админу
+    # Отправляем всем админам
     for admin_id in ADMIN_IDS:
         try:
             await context.bot.send_message(
                 chat_id=admin_id,
-                text=admin_message,
+                text=application_text,
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup(keyboard)
-            )
         except Exception as e:
             logger.error(f"Ошибка отправки админу {admin_id}: {e}")
 
     await update.message.reply_text("✅ Ваша заявка отправлена! Ожидайте ответа.")
     return ConversationHandler.END
 
-async def admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка действий админов"""
+async def admin_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработка решения администратора"""
     query = update.callback_query
     await query.answer()
     
+    if not is_admin(query.from_user.id):
+        await query.edit_message_text("⚠ Доступ запрещён")
+        return
+    
+    action, user_id = query.data.split('_')
+    response = "🎉 Ваша заявка одобрена! Скоро с вами свяжутся." if action == "approve" else "😕 Ваша заявка отклонена."
+    
     try:
-        action, user_id = query.data.split('_')
-        if action == "approve":
-            await context.bot.send_message(
-                chat_id=user_id,
-                text="🎉 Ваша заявка одобрена! Скоро с вами свяжутся."
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text="😕 К сожалению, ваша заявка отклонена."
-            )
-        
-        # Удаляем кнопки после ответа
-        await query.edit_message_reply_markup()
+        await context.bot.send_message(chat_id=user_id, text=response)
+        await query.edit_message_reply_markup()  # Удаляем кнопки
     except Exception as e:
-        logger.error(f"Ошибка обработки действия админа: {e}")
-        await query.answer("Произошла ошибка")
+        logger.error(f"Ошибка при обработке решения: {e}")
+        await query.answer("⚠ Произошла ошибка")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Отмена диалога"""
-    await update.message.reply_text("❌ Диалог прерван. Напишите /start чтобы начать заново.")
+    """Отмена подачи заявки"""
+    await update.message.reply_text("❌ Подача заявки отменена. Напишите /start чтобы начать заново.")
     return ConversationHandler.END
 
+async def toggle_bot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Включение/выключение бота (для админов)"""
+    global BOT_ACTIVE
+    
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⚠ Эта команда только для администраторов")
+        return
+    
+    BOT_ACTIVE = not BOT_ACTIVE
+    status = "включён" if BOT_ACTIVE else "выключен"
+    await update.message.reply_text(f"🔄 Бот {status}")
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка ошибок"""
+    """Глобальный обработчик ошибок"""
     logger.error("Ошибка в обработчике", exc_info=context.error)
+    if update and isinstance(update, Update):
+        try:
+            await update.message.reply_text("⚠ Произошла ошибка. Попробуйте позже.")
+        except:
+            try:
+                await update.callback_query.message.reply_text("⚠ Произошла ошибка. Попробуйте позже.")
+            except:
+                pass
 
 def main() -> None:
     """Запуск бота"""
     app = Application.builder().token(TOKEN).build()
-
+    
     # Настройка ConversationHandler
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('start', start),
-            CallbackQueryHandler(apply_button, pattern="^apply$")
+            CallbackQueryHandler(start_application, pattern="^start_application$")
         ],
         states={
-            EXPERIENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_experience)],
-            TIME_PER_DAY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_time)],
-            MOTIVATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_motivation)],
+            EXPERIENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_experience)],
+            TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_time)],
+            MOTIVATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_motivation)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
         allow_reentry=True
     )
-
+    
     # Регистрация обработчиков
     app.add_handler(conv_handler)
-    app.add_handler(CallbackQueryHandler(admin_action, pattern=r"^(approve|reject)_"))
+    app.add_handler(CallbackQueryHandler(admin_decision, pattern=r"^(approve|reject)_\d+$"))
+    app.add_handler(CommandHandler('toggle', toggle_bot))
     app.add_error_handler(error_handler)
-
-    # Запуск бота с настройками для Render
+    
+    # Настройки для Render
     app.run_polling(
         drop_pending_updates=True,
-        poll_interval=3.0,
-        close_loop=False
+        poll_interval=2.0,
+        close_loop=False,
+        stop_signals=[]
     )
 
 if __name__ == '__main__':
