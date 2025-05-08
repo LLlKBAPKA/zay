@@ -125,17 +125,25 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Диалог прерван. Напишите /start чтобы начать заново.")
     return ConversationHandler.END
 
+async def post_init(application: Application) -> None:
+    """Действия после инициализации бота."""
+    await application.bot.delete_webhook(drop_pending_updates=True)
+    logger.info("Бот успешно запущен")
+
+async def post_stop(application: Application) -> None:
+    """Действия при остановке бота."""
+    logger.info("Бот остановлен")
+
 def main() -> None:
     """Запуск бота."""
-    # Создаем Application с persistence для Render Free
-    persistence = None  # На Render Free лучше не использовать persistence из-за ограничений
-    
+    # Создаем Application с обработчиками событий
     app = Application.builder() \
         .token(TOKEN) \
-        .persistence(persistence) \
+        .post_init(post_init) \
+        .post_stop(post_stop) \
         .build()
 
-    # Обработчик диалога
+    # Обработчик диалога с явным указанием per_message=True
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('start', start),
@@ -147,21 +155,24 @@ def main() -> None:
             MOTIVATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, motivation)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
+        per_message=True,  # Важно для корректной работы CallbackQuery
         allow_reentry=True
     )
 
     # Регистрируем обработчики
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(admin_action, pattern=r"^(accept|reject)_\d+$"))
-    
-    # Обработчик для команды /cancel вне диалога
     app.add_handler(CommandHandler('cancel', cancel))
 
-    # Запускаем бота с оптимизациями для Render Free
+    # Обработчик ошибок
+    app.add_error_handler(lambda u, c: logger.error("Ошибка в обработчике", exc_info=c.error))
+
+    # Запускаем бота с оптимизациями для Render
     app.run_polling(
-        poll_interval=1.0,  # Уменьшенный интервал опроса
-        drop_pending_updates=True,  # Игнорируем обновления, пока бот был офлайн
-        close_loop=False  # Для корректной работы на Render
+        poll_interval=2.0,  # Увеличенный интервал для Render Free
+        drop_pending_updates=True,
+        close_loop=False,
+        stop_signals=None  # Для корректной обработки сигналов остановки
     )
 
 if __name__ == '__main__':
