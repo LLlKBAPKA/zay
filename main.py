@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 
 # Конфигурация
 TOKEN = os.getenv("TOKEN")
-ADMIN_1 = os.getenv("ADMIN_1")  # ID первого администратора
-ADMIN_2 = os.getenv("ADMIN_2")  # ID второго администратора
+ADMIN_1 = os.getenv("ADMIN_1")
+ADMIN_2 = os.getenv("ADMIN_2")
 
 # Проверяем и фильтруем ID админов
 ADMIN_IDS = []
@@ -62,7 +62,7 @@ async def start_application(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def receive_experience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Получение информации об опыте"""
-    context.user_data['experience'] = update.message.text[:200]  # Ограничение длины
+    context.user_data['experience'] = update.message.text[:200]
     await update.message.reply_text("⏳ Сколько часов в день вы готовы уделять работе? (Цифра)")
     return TIME
 
@@ -84,9 +84,8 @@ async def receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 async def receive_motivation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Завершение заявки и отправка администраторам"""
     user = update.effective_user
-    context.user_data['motivation'] = update.message.text[:500]  # Ограничение длины
+    context.user_data['motivation'] = update.message.text[:500]
     
-    # Формируем текст заявки
     application_text = (
         "📌 *Новая заявка*\n\n"
         f"👤 *Имя:* {user.full_name}\n"
@@ -97,7 +96,6 @@ async def receive_motivation(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"🎯 *Мотивация:* {context.user_data['motivation']}"
     )
     
-    # Кнопки для админов
     keyboard = [
         [
             InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{user.id}"),
@@ -105,7 +103,6 @@ async def receive_motivation(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ]
     ]
     
-    # Отправляем всем админам
     for admin_id in ADMIN_IDS:
         try:
             await context.bot.send_message(
@@ -113,6 +110,7 @@ async def receive_motivation(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 text=application_text,
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup(keyboard)
+            )
         except Exception as e:
             logger.error(f"Ошибка отправки админу {admin_id}: {e}")
 
@@ -133,7 +131,7 @@ async def admin_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     try:
         await context.bot.send_message(chat_id=user_id, text=response)
-        await query.edit_message_reply_markup()  # Удаляем кнопки
+        await query.edit_message_reply_markup()
     except Exception as e:
         logger.error(f"Ошибка при обработке решения: {e}")
         await query.answer("⚠ Произошла ошибка")
@@ -171,7 +169,6 @@ def main() -> None:
     """Запуск бота"""
     app = Application.builder().token(TOKEN).build()
     
-    # Настройка ConversationHandler
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('start', start),
@@ -186,13 +183,11 @@ def main() -> None:
         allow_reentry=True
     )
     
-    # Регистрация обработчиков
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(admin_decision, pattern=r"^(approve|reject)_\d+$"))
     app.add_handler(CommandHandler('toggle', toggle_bot))
     app.add_error_handler(error_handler)
     
-    # Настройки для Render
     app.run_polling(
         drop_pending_updates=True,
         poll_interval=2.0,
