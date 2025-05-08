@@ -26,7 +26,7 @@ ADMIN_CHAT_IDS = [int(id) for id in os.getenv("ADMIN_IDS", "").split(",") if id]
 # Этапы диалога
 START, EXPERIENCE, TIME_PER_DAY, MOTIVATION = range(4)
 
-class BotApplication:
+class ApplicationBot:
     def __init__(self):
         self.app = Application.builder().token(TOKEN).build()
         self._setup_handlers()
@@ -45,7 +45,7 @@ class BotApplication:
                 MOTIVATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, self._motivation)],
             },
             fallbacks=[CommandHandler('cancel', self._cancel)],
-            per_message=True
+            per_message=False  # Изменено на False для корректной работы
         )
 
         self.app.add_handler(conv_handler)
@@ -144,24 +144,57 @@ class BotApplication:
     async def run(self):
         while self.restart_count < self.max_restarts:
             try:
+                # Явно останавливаем предыдущий экземпляр, если был
+                if hasattr(self, 'running') and self.running:
+                    await self.app.updater.stop()
+                    await self.app.stop()
+                    await self.app.shutdown()
+
                 await self.app.initialize()
                 await self.app.start()
+                self.running = True
+                
+                # Настраиваем polling с правильными параметрами
                 await self.app.updater.start_polling(
                     poll_interval=3.0,
                     drop_pending_updates=True,
-                    timeout=20
+                    timeout=20,
+                    allowed_updates=Update.ALL_TYPES
                 )
-                await self.app.updater.idle()
-            except Exception as e:
+                
+                # Бесконечный цикл ожидания
+                while True:
+                    await asyncio.sleep(3600)  # Проверяем каждые 1 час
+
+            except telegram.error.Conflict:
+                logger.error("Обнаружен конфликт - другой экземпляр бота уже запущен. Ожидаем...")
+                await asyncio.sleep(10)
                 self.restart_count += 1
-                logger.error(f"Ошибка (попытка {self.restart_count}/{self.max_restarts}): {e}")
+
+            except Exception as e:
+                logger.error(f"Ошибка (попытка {self.restart_count + 1}/{self.max_restarts}): {e}")
+                self.restart_count += 1
                 await asyncio.sleep(5)
+                
             finally:
-                await self.app.stop()
-                await self.app.shutdown()
+                if hasattr(self, 'running') and self.running:
+                    try:
+                        await self.app.updater.stop()
+                        await self.app.stop()
+                        await self.app.shutdown()
+                        self.running = False
+                    except Exception as e:
+                        logger.error(f"Ошибка при остановке: {e}")
 
         logger.error("Достигнуто максимальное количество перезапусков. Бот остановлен.")
 
 if __name__ == '__main__':
-    bot = BotApplication()
-    asyncio.run(bot.run())
+    import telegram
+    bot = ApplicationBot()
+    
+    try:
+        asyncio.run(bot.run())
+    except KeyboardInterrupt:
+        logger.info("Бот остановлен вручную")
+    except Exception as e:
+        logger.error(f"Фатальная ошибка: {e}")
