@@ -10,6 +10,7 @@ from telegram.ext import (
     filters,
     ConversationHandler
 )
+from telegram.helpers import escape_markdown
 
 # Настройка логирования
 logging.basicConfig(
@@ -20,8 +21,8 @@ logger = logging.getLogger(__name__)
 
 # Конфигурация
 TOKEN = os.getenv("TOKEN")
-ADMIN_1 = os.getenv("ADMIN_1")
-ADMIN_2 = os.getenv("ADMIN_2")
+ADMIN_1 = os.getenv("ADMIN_1")  # ID первого администратора
+ADMIN_2 = os.getenv("ADMIN_2")  # ID второго администратора
 
 # Проверяем и фильтруем ID админов
 ADMIN_IDS = []
@@ -62,7 +63,7 @@ async def start_application(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def receive_experience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Получение информации об опыте"""
-    context.user_data['experience'] = update.message.text[:200]
+    context.user_data['experience'] = update.message.text[:200]  # Ограничение длины
     await update.message.reply_text("⏳ Сколько часов в день вы готовы уделять работе? (Цифра)")
     return TIME
 
@@ -84,35 +85,57 @@ async def receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 async def receive_motivation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Завершение заявки и отправка администраторам"""
     user = update.effective_user
-    context.user_data['motivation'] = update.message.text[:500]
+    context.user_data['motivation'] = update.message.text[:500]  # Ограничение длины
     
-    application_text = (
-        "📌 *Новая заявка*\n\n"
-        f"👤 *Имя:* {user.full_name}\n"
-        f"📱 *Username:* @{user.username if user.username else 'нет'}\n"
-        f"🆔 *ID:* `{user.id}`\n\n"
-        f"💼 *Опыт:* {context.user_data['experience']}\n"
-        f"⏳ *Время:* {context.user_data['time']}\n"
-        f"🎯 *Мотивация:* {context.user_data['motivation']}"
-    )
-    
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{user.id}"),
-            InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_{user.id}")
+    # Формируем текст заявки с экранированием Markdown
+    try:
+        application_text = (
+            "📌 *Новая заявка*\n\n"
+            f"👤 *Имя:* {escape_markdown(user.full_name, version=2)}\n"
+            f"📱 *Username:* @{escape_markdown(user.username, version=2) if user.username else 'нет'}\n"
+            f"🆔 *ID:* `{user.id}`\n\n"
+            f"💼 *Опыт:* {escape_markdown(context.user_data['experience'], version=2)}\n"
+            f"⏳ *Время:* {escape_markdown(context.user_data['time'], version=2)}\n"
+            f"🎯 *Мотивация:* {escape_markdown(context.user_data['motivation'], version=2)}"
+        )
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{user.id}"),
+                InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_{user.id}")
+            ]
         ]
-    ]
-    
-    for admin_id in ADMIN_IDS:
-        try:
-            await context.bot.send_message(
-                chat_id=admin_id,
-                text=application_text,
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        except Exception as e:
-            logger.error(f"Ошибка отправки админу {admin_id}: {e}")
+        
+        # Отправляем всем админам с MarkdownV2
+        for admin_id in ADMIN_IDS:
+            try:
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=application_text,
+                    parse_mode="MarkdownV2",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            except Exception as e:
+                logger.error(f"MarkdownV2 ошибка для {admin_id}: {e}")
+                # Отправка без форматирования, если Markdown не работает
+                plain_text = (
+                    "📌 Новая заявка\n\n"
+                    f"👤 Имя: {user.full_name}\n"
+                    f"📱 Username: @{user.username if user.username else 'нет'}\n"
+                    f"🆔 ID: {user.id}\n\n"
+                    f"💼 Опыт: {context.user_data['experience']}\n"
+                    f"⏳ Время: {context.user_data['time']}\n"
+                    f"🎯 Мотивация: {context.user_data['motivation']}"
+                )
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=plain_text,
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+                
+    except Exception as e:
+        logger.error(f"Критическая ошибка при отправке: {e}")
+        await update.message.reply_text("⚠ Произошла ошибка при отправке заявки")
 
     await update.message.reply_text("✅ Ваша заявка отправлена! Ожидайте ответа.")
     return ConversationHandler.END
@@ -131,7 +154,7 @@ async def admin_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     try:
         await context.bot.send_message(chat_id=user_id, text=response)
-        await query.edit_message_reply_markup()
+        await query.edit_message_reply_markup()  # Удаляем кнопки
     except Exception as e:
         logger.error(f"Ошибка при обработке решения: {e}")
         await query.answer("⚠ Произошла ошибка")
@@ -169,6 +192,7 @@ def main() -> None:
     """Запуск бота"""
     app = Application.builder().token(TOKEN).build()
     
+    # Настройка ConversationHandler
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('start', start),
@@ -183,14 +207,16 @@ def main() -> None:
         allow_reentry=True
     )
     
+    # Регистрация обработчиков
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(admin_decision, pattern=r"^(approve|reject)_\d+$"))
     app.add_handler(CommandHandler('toggle', toggle_bot))
     app.add_error_handler(error_handler)
     
+    # Настройки для Render
     app.run_polling(
         drop_pending_updates=True,
-        poll_interval=2.0,
+        poll_interval=3.0,
         close_loop=False,
         stop_signals=[]
     )
